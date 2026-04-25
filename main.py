@@ -12,7 +12,7 @@ from threading import Thread
 JST = timezone(timedelta(hours=+9), 'JST')
 JSON_FILE = 'credentials.json'
 SPREADSHEET_NAME = 'rurimasa-checker'
-REPORT_CHANNEL_ID = 1497406871534043236
+REPORT_CHANNEL_ID = 1497421654262022365
 
 # --- スリープ防止用のWebサーバー ---
 app = Flask('')
