@@ -4,18 +4,15 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import datetime
+from datetime import timedelta, timezone
 from flask import Flask
 from threading import Thread
-import datetime
-from datetime import timedelta, timezone
-# タイムゾーン設定用
-JST = timezone(timedelta(hours=+9), 'JST')
 
 # --- 設定項目 ---
-# Renderの環境変数から取得するように設定
-JSON_FILE = 'credentials.json'  # Secret Fileとしてアップロードする場合
+JST = timezone(timedelta(hours=+9), 'JST')
+JSON_FILE = 'credentials.json'
 SPREADSHEET_NAME = 'rurimasa-checker'
-REPORT_CHANNEL_ID = 1497406871534043236  # 結果を投稿するチャンネルIDに書き換え
+REPORT_CHANNEL_ID = 1497406871534043236
 
 # --- スリープ防止用のWebサーバー ---
 app = Flask('')
@@ -34,8 +31,8 @@ record_sheet = workbook.worksheet("実績")
 # --- Discord Bot設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True        # メンバー一覧を取得するために必要
-intents.voice_states = True   # VCの状態を確認するために必要
+intents.members = True
+intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
@@ -43,130 +40,106 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     if not check_attendance.is_running():
         check_attendance.start()
+
+# --- ユーティリティコマンド ---
 @bot.command()
 async def live(ctx):
-    """Botが生きているか、応答速度はどれくらいか確認する"""
-    latency = round(bot.latency * 1000) # ミリ秒換算
-    await ctx.send(f"✅ 私は生きています！ (応答速度: {latency}ms)")
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"✅ 稼働中 (応答速度: {latency}ms)")
 
 @bot.command()
 async def time(ctx):
-    """サーバーの現在時刻を確認する（シフト判定のズレ確認用）"""
     now = datetime.datetime.now(JST)
     await ctx.send(f"🕒 現在の日本時刻: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
 @bot.command()
 async def check_gs(ctx):
-    """スプレッドシートに正しくアクセスできるかテストする"""
     try:
-        # シフトシートのA1を読み込んでみる
         val = shift_sheet.acell('A1').value
-        await ctx.send(f"📊 スプレッドシート接続OK！ (A1の内容: {val})")
+        await ctx.send(f"📊 スプレッドシート接続OK！ (A1: {val})")
     except Exception as e:
-        await ctx.send(f"❌ スプレッドシート接続エラー: {e}")
+        await ctx.send(f"❌ 接続エラー: {e}")
 
-# もし !test も残しておきたいなら
-@bot.command()
-async def test(ctx):
-    await ctx.send("テストコマンド受信！正常に動作しています。")
-
-# --- 機能1: シフト登録コマンド ---
+# --- シフト登録 ---
 @bot.command()
 async def shift(ctx, member: discord.Member = None, date_str: str = None, start_t: str = None, end_t: str = None):
-    # 1. 引数が足りない場合のチェック
-    if member is None or date_str is None or start_t is None or end_t is None:
-        embed = discord.Embed(
-            title="❌ 入力形式が正しくありません",
-            description="以下の形式で入力してください：\n`!shift @ユーザー 日付(YYYY-MM-DD) 開始時刻 終了時刻`",
-            color=0xff0000
-        )
-        embed.add_field(name="入力例", value="`!shift @yam 2026-04-25 10:00 15:00`", inline=False)
-        embed.set_footer(text=f"現在のサーバー時刻: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    if not all([member, date_str, start_t, end_t]):
+        embed = discord.Embed(title="❌ 入力形式エラー", color=0xff0000)
+        embed.description = "`!shift @メンション YYYY-MM-DD 開始時刻 終了時刻`"
+        embed.add_field(name="例", value="`!shift @yam 2026-04-25 10:00 15:00`")
         await ctx.send(embed=embed)
         return
 
     try:
-        # 2. 日付形式のバリデーション
         datetime.datetime.strptime(date_str, '%Y-%m-%d')
-        # 時刻形式もチェックしたい場合はここに追加可能
-        
-        # スプレッドシートへ書き込み
         shift_sheet.append_row([str(member.id), member.display_name, date_str, start_t, end_t])
-        
-        await ctx.send(f"✅ **登録完了**: {member.display_name}さんのシフトを保存しました。\n📅 {date_str} ({start_t} 〜 {end_t})")
-        
+        await ctx.send(f"✅ **登録完了**: {member.display_name} ({date_str} {start_t}〜{end_t})")
     except ValueError:
-        await ctx.send("❌ **日付エラー**: 日付は `YYYY-MM-DD` (例: 2026-04-25) の形式で入力してください。")
-    except Exception as e:
-        await ctx.send(f"⚠️ **予期せぬエラー**: {e}")
+        await ctx.send("❌ 日付は `YYYY-MM-DD` 形式で入力してください。")
 
-# --- エラーハンドラ（コマンド自体が見つからない等の場合） ---
-@shift.error
-async def shift_error(ctx, error):
-    if isinstance(error, commands.BadArgument):
-        await ctx.send("❌ **ユーザーが見つかりません**: @メンションで正しくユーザーを指定してください。")
-# --- 機能2: 15分おきの自動監視 ---
+# --- 監視ロジック ---
 @tasks.loop(minutes=15)
 async def check_attendance():
     now = datetime.datetime.now(JST)
     today_str = now.strftime('%Y-%m-%d')
     now_time = now.time()
-    
+
     report_channel = bot.get_channel(REPORT_CHANNEL_ID)
     if not report_channel: return
 
-    # シフトをすべて取得
-    all_shifts = shift_sheet.get_all_records()
-    
-    for row in all_shifts:
-        if row['日付'] == today_str:
-            start = datetime.datetime.strptime(row['開始時刻'], '%H:%M').time()
-            end = datetime.datetime.strptime(row['終了時刻'], '%H:%M').time()
-            
-            # 今がシフト時間内か判定
-            if start <= now_time <= end:
-                user_id = int(row['ユーザーID'])
-                # ギルド（サーバー）からユーザーを探す
-                for guild in bot.guilds:
-                    member = guild.get_member(user_id)
-                    if member:
-                        # VCにいるかチェック
-                        if member.voice and member.voice.channel:
-                            # 🚨 欠勤（VC滞在）判定
-                            vc_name = member.voice.channel.name
-                            record_sheet.append_row([
-                                str(user_id), member.display_name, 
-                                now.strftime('%Y-%m-%d %H:%M'), "欠勤(VC)", vc_name
-                            ])
-                            await report_channel.send(
-                                f"🚨 **欠勤警告**: {member.mention} さん、シフト時間中ですがVC「{vc_name}」に滞在しています。"
-                            )
+    try:
+        all_shifts = shift_sheet.get_all_records()
+    except: return
 
-# --- 機能3: 統計表示コマンド ---
+    # 通知の重複を防ぐため、この実行回で既に通知したユーザーIDを保持
+    notified_ids = set()
+
+    for row in all_shifts:
+        try:
+            # IDが数字でない(test等)の場合は飛ばす
+            uid_str = str(row['ユーザーID']).strip()
+            if not uid_str.isdigit(): continue
+            user_id = int(uid_str)
+
+            if row['日付'] == today_str:
+                start = datetime.datetime.strptime(row['開始時刻'], '%H:%M').time()
+                end = datetime.datetime.strptime(row['終了時刻'], '%H:%M').time()
+
+                if start <= now_time <= end and user_id not in notified_ids:
+                    # サーバーを横断してユーザーを1回だけ検索
+                    member = discord.utils.get(bot.get_all_members(), id=user_id)
+                    
+                    if member and member.voice and member.voice.channel:
+                        vc_name = member.voice.channel.name
+                        record_sheet.append_row([
+                            str(user_id), member.display_name,
+                            now.strftime('%Y-%m-%d %H:%M'), "欠勤(VC)", vc_name
+                        ])
+                        await report_channel.send(
+                            f"🚨 **欠勤警告**: {member.mention} さん、シフト時間中ですがVC「{vc_name}」に滞在しています。"
+                        )
+                        notified_ids.add(user_id) # 通知済みリストに追加
+        except Exception as e:
+            print(f"Row処理エラー: {e}")
+
+@bot.command()
+async def check_now(ctx):
+    await ctx.send("🔍 シフト状況を強制チェックします...")
+    await check_attendance()
+    await ctx.send("✅ チェック完了。")
+
 @bot.command()
 async def stats(ctx, member: discord.Member):
     all_records = record_sheet.get_all_records()
-    user_records = [r for r in all_records if r['ユーザーID'] == str(member.id)]
-    
-    total_absent = len(user_records)
-    # 今月の記録に絞り込み
-    this_month = datetime.datetime.now().strftime('%Y-%m')
-    month_absent = len([r for r in user_records if r['日時'].startswith(this_month)])
-    
-    embed = discord.Embed(title=f"📊 {member.display_name}さんの出勤統計", color=0xff0000)
-    embed.add_field(name="今月の欠勤判定数", value=f"{month_absent} 回", inline=True)
-    embed.add_field(name="累計欠勤判定数", value=f"{total_absent} 回", inline=True)
-    embed.set_footer(text="※15分おきの判定でVCにいた回数です")
+    user_records = [r for r in all_records if str(r['ユーザーID']) == str(member.id)]
+    this_month = datetime.datetime.now(JST).strftime('%Y-%m')
+    month_absent = len([r for r in user_records if str(r['日時']).startswith(this_month)])
+
+    embed = discord.Embed(title=f"📊 {member.display_name}さんの統計", color=0x00ff00)
+    embed.add_field(name="今月の欠勤判定", value=f"{month_absent} 回")
+    embed.add_field(name="累計", value=f"{len(user_records)} 回")
     await ctx.send(embed=embed)
-@bot.command()
-async def check_now(ctx):
-    """今すぐシフト判定を強制実行する"""
-    await ctx.send("🔍 [デバッグ] 現在のシフト状況とVC滞在をチェックします...")
-    
-    # 15分おきに動かしている関数を、今ここで実行
-    await check_attendance() 
-    
-    await ctx.send("✅ チェックが完了しました。もしシフト中の人がVCにいれば、報告チャンネルに通知が出ています。")
+
 # 起動
 Thread(target=run_web).start()
 bot.run(os.getenv('DISCORD_TOKEN'))
