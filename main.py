@@ -67,17 +67,40 @@ async def test(ctx):
     await ctx.send("テストコマンド受信！正常に動作しています。")
 
 # --- 機能1: シフト登録コマンド ---
-# 使い方: !shift @ユーザー 2026-04-25 10:00 15:00
 @bot.command()
-async def shift(ctx, member: discord.Member, date_str, start_t, end_t):
-    try:
-        # 日付形式のチェック
-        datetime.datetime.strptime(date_str, '%Y-%m-%d')
-        shift_sheet.append_row([str(member.id), member.display_name, date_str, start_t, end_t])
-        await ctx.send(f"✅ {member.display_name}さんのシフトを登録しました: {date_str} {start_t}~{end_t}")
-    except ValueError:
-        await ctx.send("❌ 日付形式が違います。 YYYY-MM-DD で入力してください。")
+async def shift(ctx, member: discord.Member = None, date_str: str = None, start_t: str = None, end_t: str = None):
+    # 1. 引数が足りない場合のチェック
+    if member is None or date_str is None or start_t is None or end_t is None:
+        embed = discord.Embed(
+            title="❌ 入力形式が正しくありません",
+            description="以下の形式で入力してください：\n`!shift @ユーザー 日付(YYYY-MM-DD) 開始時刻 終了時刻`",
+            color=0xff0000
+        )
+        embed.add_field(name="入力例", value="`!shift @yam 2026-04-25 10:00 15:00`", inline=False)
+        embed.set_footer(text=f"現在のサーバー時刻: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        await ctx.send(embed=embed)
+        return
 
+    try:
+        # 2. 日付形式のバリデーション
+        datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        # 時刻形式もチェックしたい場合はここに追加可能
+        
+        # スプレッドシートへ書き込み
+        shift_sheet.append_row([str(member.id), member.display_name, date_str, start_t, end_t])
+        
+        await ctx.send(f"✅ **登録完了**: {member.display_name}さんのシフトを保存しました。\n📅 {date_str} ({start_t} 〜 {end_t})")
+        
+    except ValueError:
+        await ctx.send("❌ **日付エラー**: 日付は `YYYY-MM-DD` (例: 2026-04-25) の形式で入力してください。")
+    except Exception as e:
+        await ctx.send(f"⚠️ **予期せぬエラー**: {e}")
+
+# --- エラーハンドラ（コマンド自体が見つからない等の場合） ---
+@shift.error
+async def shift_error(ctx, error):
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("❌ **ユーザーが見つかりません**: @メンションで正しくユーザーを指定してください。")
 # --- 機能2: 15分おきの自動監視 ---
 @tasks.loop(minutes=15)
 async def check_attendance():
