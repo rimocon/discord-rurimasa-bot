@@ -39,6 +39,32 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     if not check_attendance.is_running():
         check_attendance.start()
+@bot.command()
+async def live(ctx):
+    """Botが生きているか、応答速度はどれくらいか確認する"""
+    latency = round(bot.latency * 1000) # ミリ秒換算
+    await ctx.send(f"✅ 私は生きています！ (応答速度: {latency}ms)")
+
+@bot.command()
+async def time(ctx):
+    """サーバーの現在時刻を確認する（シフト判定のズレ確認用）"""
+    now = datetime.datetime.now()
+    await ctx.send(f"🕒 現在のサーバー時刻: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+@bot.command()
+async def check_gs(ctx):
+    """スプレッドシートに正しくアクセスできるかテストする"""
+    try:
+        # シフトシートのA1を読み込んでみる
+        val = shift_sheet.acell('A1').value
+        await ctx.send(f"📊 スプレッドシート接続OK！ (A1の内容: {val})")
+    except Exception as e:
+        await ctx.send(f"❌ スプレッドシート接続エラー: {e}")
+
+# もし !test も残しておきたいなら
+@bot.command()
+async def test(ctx):
+    await ctx.send("テストコマンド受信！正常に動作しています。")
 
 # --- 機能1: シフト登録コマンド ---
 # 使い方: !shift @ユーザー 2026-04-25 10:00 15:00
