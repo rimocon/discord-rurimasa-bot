@@ -6,6 +6,13 @@ import os
 import datetime
 from flask import Flask
 from threading import Thread
+import datetime
+from datetime import timedelta, timezone
+# タイムゾーン設定用
+JST = timezone(timedelta(hours=+9), 'JST')
+
+# check_attendance 内の now を書き換え
+# now = datetime.datetime.now(JST)
 
 # --- 設定項目 ---
 # Renderの環境変数から取得するように設定
@@ -154,7 +161,15 @@ async def stats(ctx, member: discord.Member):
     embed.add_field(name="累計欠勤判定数", value=f"{total_absent} 回", inline=True)
     embed.set_footer(text="※15分おきの判定でVCにいた回数です")
     await ctx.send(embed=embed)
-
+@bot.command()
+async def check_now(ctx):
+    """今すぐシフト判定を強制実行する"""
+    await ctx.send("🔍 [デバッグ] 現在のシフト状況とVC滞在をチェックします...")
+    
+    # 15分おきに動かしている関数を、今ここで実行
+    await check_attendance() 
+    
+    await ctx.send("✅ チェックが完了しました。もしシフト中の人がVCにいれば、報告チャンネルに通知が出ています。")
 # 起動
 Thread(target=run_web).start()
 bot.run(os.getenv('DISCORD_TOKEN'))
