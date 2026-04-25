@@ -11,9 +11,6 @@ from datetime import timedelta, timezone
 # タイムゾーン設定用
 JST = timezone(timedelta(hours=+9), 'JST')
 
-# check_attendance 内の now を書き換え
-# now = datetime.datetime.now(JST)
-
 # --- 設定項目 ---
 # Renderの環境変数から取得するように設定
 JSON_FILE = 'credentials.json'  # Secret Fileとしてアップロードする場合
@@ -55,8 +52,8 @@ async def live(ctx):
 @bot.command()
 async def time(ctx):
     """サーバーの現在時刻を確認する（シフト判定のズレ確認用）"""
-    now = datetime.datetime.now()
-    await ctx.send(f"🕒 現在のサーバー時刻: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    now = datetime.datetime.now(JST)
+    await ctx.send(f"🕒 現在の日本時刻: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
 @bot.command()
 async def check_gs(ctx):
@@ -111,7 +108,7 @@ async def shift_error(ctx, error):
 # --- 機能2: 15分おきの自動監視 ---
 @tasks.loop(minutes=15)
 async def check_attendance():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(JST)
     today_str = now.strftime('%Y-%m-%d')
     now_time = now.time()
     
