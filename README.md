@@ -55,13 +55,13 @@ DISCORD_TOKEN: Your bot's secret token.
 ## Usage
 Commands
 
-* /shift [member] [date] [start_time] [end_time]: Register a new shift (Format: YYYY-MM-DD, HH:MM).
+* ` /shift [member] [date] [start_time] [end_time]:` Register a new shift (Format: YYYY-MM-DD, HH:MM).
 
-* /stats [member]: View monthly and total absence days for a specific user.
+* ` /stats [member]:` View monthly and total absence days for a specific user.
 
-* /live: Check if the bot is alive and responsive.
+* ` /live:` Check if the bot is alive and responsive.
 
-* /check_now: Force an immediate attendance check.
+* ` /check_now:` Force an immediate attendance check.
 
 ## Penalty Logic
 The bot calculates absences based on unique days. If a user is caught in a VC multiple times during the same day, it counts as 1 day of absence. Upon reaching the 5th day in a calendar month:
