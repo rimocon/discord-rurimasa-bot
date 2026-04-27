@@ -10,7 +10,7 @@ class AttendanceCog(commands.Cog):
         self.bot = bot
         self.sheets = SheetsHandler()
         self.check_attendance.start()
-        self.monthly_cleanup.start()
+        self.monthly_cleanup.start()  # 自動解除タスク開始
 
     def cog_unload(self):
         self.check_attendance.cancel()
@@ -18,41 +18,34 @@ class AttendanceCog(commands.Cog):
 
     # --- 労働時間の計算ロジック (欠勤日は除外) ---
     def _calculate_monthly_hours(self, user_id, target_month):
-        all_shifts = self.sheets.get_all_shifts()
-        all_records = self.sheets.get_user_records(user_id)
-        
-        # 欠勤（VC滞在）が記録された日付のリスト
-        absent_dates = {str(r['日時'])[:10] for r in all_records if str(r['日時']).startswith(target_month)}
-        
-        total_seconds = 0
-        for row in all_shifts:
-            if str(row['ユーザーID']) == str(user_id) and str(row['日付']).startswith(target_month):
-                # 欠勤記録がある日はカウントしない
-                if row['日付'] in absent_dates:
-                    continue
-                
-                try:
-                    start = datetime.datetime.strptime(row['開始時刻'], '%H:%M')
-                    end = datetime.datetime.strptime(row['終了時刻'], '%H:%M')
-                    delta = end - start
-                    if delta.total_seconds() > 0:
-                        total_seconds += delta.total_seconds()
-                except:
-                    continue
-        
-        return total_seconds / 3600  # 時間単位で返す
+        try:
+            all_shifts = self.sheets.get_all_shifts()
+            records = self.sheets.get_user_records(user_id)
+            
+            # 欠勤（不適切VC）が記録された日付を取得
+            absent_dates = {str(r['日時'])[:10] for r in records if str(r['日時']).startswith(target_month)}
+            
+            total_seconds = 0
+            for row in all_shifts:
+                if str(row['ユーザーID']) == str(user_id) and str(row['日付']).startswith(target_month):
+                    # 欠勤記録がある日はその日の全シフト時間をカウントしない
+                    if row['日付'] in absent_dates:
+                        continue
+                    
+                    try:
+                        start = datetime.datetime.strptime(row['開始時刻'], '%H:%M')
+                        end = datetime.datetime.strptime(row['終了時刻'], '%H:%M')
+                        delta = end - start
+                        if delta.total_seconds() > 0:
+                            total_seconds += delta.total_seconds()
+                    except:
+                        continue
+            return total_seconds / 3600
+        except Exception as e:
+            print(f"Hours calculation error: {e}")
+            return 0
 
-    # --- ご褒美通知ロジック ---
-    async def _check_rewards(self, member, channel):
-        this_month = datetime.datetime.now(Config.JST).strftime('%Y-%m')
-        hours = self._calculate_monthly_hours(member.id, this_month)
-
-        if hours >= 100:
-            await channel.send(f"🎊 **LEGENDARY WORKER** 🎊\n{member.mention} さん、今月の実労働が **{hours:.1f}時間** に達しました！おめでとうございます！神の如き献身です。")
-        elif hours >= 30:
-            await channel.send(f"✨ **GOOD JOB** ✨\n{member.mention} さん、今月の実労働が **{hours:.1f}時間** を突破しました！いい調子ですよ！")
-
-    # --- 監視タスク ---
+    # --- 定期監視タスク ---
     @tasks.loop(minutes=15)
     async def check_attendance(self):
         now = datetime.datetime.now(Config.JST)
@@ -66,28 +59,31 @@ class AttendanceCog(commands.Cog):
 
         for row in all_shifts:
             if row['日付'] == today_str:
-                user_id = int(row['ユーザーID'])
-                start = datetime.datetime.strptime(row['開始時刻'], '%H:%M').time()
-                end = datetime.datetime.strptime(row['終了時刻'], '%H:%M').time()
+                try:
+                    user_id = int(row['ユーザーID'])
+                    start = datetime.datetime.strptime(row['開始時刻'], '%H:%M').time()
+                    end = datetime.datetime.strptime(row['終了時刻'], '%H:%M').time()
 
-                if start <= now.time() <= end and user_id not in notified_ids:
-                    member = discord.utils.get(self.bot.get_all_members(), id=user_id)
-                    if member and member.voice:
-                        # 欠勤記録
-                        self.sheets.add_record([str(user_id), member.display_name, now.strftime('%Y-%m-%d %H:%M'), "欠勤(VC)", member.voice.channel.name])
-                        await report_channel.send(f"🚨 **警告**: {member.mention} さん、シフト中の不適切VC滞在により、本日の労働時間は**無効**となります。")
-                        notified_ids.add(user_id)
-                        
-                        # 罰則チェック
-                        await self._check_penalty(member, this_month, report_channel)
-        
-        # 定期的に全員の報酬チェック（負荷軽減のため適宜調整可能）
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if not member.bot:
-                    await self._check_rewards(member, report_channel)
+                    if start <= now.time() <= end and user_id not in notified_ids:
+                        member = discord.utils.get(self.bot.get_all_members(), id=user_id)
+                        if member and member.voice:
+                            # 欠勤を記録
+                            self.sheets.add_record([
+                                str(user_id), member.display_name, 
+                                now.strftime('%Y-%m-%d %H:%M'), "欠勤(VC)", member.voice.channel.name
+                            ])
+                            await report_channel.send(f"🚨 **警告**: {member.mention} さん、シフト中の不適切VC滞在を確認。本日の労働時間は無効です。")
+                            notified_ids.add(user_id)
+                            
+                            # 罰則チェック (5回欠勤)
+                            await self._check_penalty(member, this_month, report_channel)
+                            
+                            # 報酬チェック (30h / 100h)
+                            await self._check_rewards(member, this_month, report_channel)
+                except:
+                    continue
 
-    # --- 罰則チェック ---
+    # --- 罰則ロジック ---
     async def _check_penalty(self, member, this_month, channel):
         records = self.sheets.get_user_records(member.id)
         absent_dates = {str(r['日時'])[:10] for r in records if str(r['日時']).startswith(this_month)}
@@ -95,29 +91,54 @@ class AttendanceCog(commands.Cog):
         if len(absent_dates) >= Config.PENALTY_THRESHOLD_DAYS:
             role = discord.utils.get(member.guild.roles, name=Config.PENALTY_ROLE_NAME)
             if role and role not in member.roles:
-                await member.add_roles(role)
-                await channel.send(f"🚨 **@everyone 社会のゴミ認定** 🚨\n{member.mention} は月5回の欠勤を達成しました。翌々月までその不名誉なロールを背負って過ごしてください。")
+                try:
+                    await member.add_roles(role)
+                    await channel.send(f"🚨 **@everyone 社会のゴミ認定** 🚨\n{member.mention} は月5回の欠勤を記録しました。翌々月までその役職で反省してください。")
+                except Exception as e:
+                    print(f"Role addition error: {e}")
 
-    # --- ロール自動削除（翌々月の1日に実行） ---
+    # --- 報酬ロジック ---
+    async def _check_rewards(self, member, this_month, channel):
+        hours = self._calculate_monthly_hours(member.id, this_month)
+        # 30時間、100時間に「ちょうど」または「超えた直後」に通知するための簡易フラグ管理は
+        # 複雑になるため、ここでは達成時にメッセージを送る仕様にします。
+        if hours >= 100:
+            await channel.send(f"🎊 **おめでとう！** {member.mention} さん、月間稼働が **{hours:.1f}時間** に達しました！素晴らしい貢献です！")
+        elif hours >= 30:
+            await channel.send(f"✨ **いい調子ですよ！** {member.mention} さん、月間稼働が **{hours:.1f}時間** を突破しました！")
+
+    # --- ロール自動削除 (毎月1日に実行) ---
     @tasks.loop(time=datetime.time(hour=0, minute=0))
     async def monthly_cleanup(self):
         now = datetime.datetime.now(Config.JST)
-        if now.day != 1: return
+        if now.day != 1: return # 1日以外はスルー
 
-        role_name = Config.PENALTY_ROLE_NAME
         report_channel = self.bot.get_channel(Config.REPORT_CHANNEL_ID)
-        
         for guild in self.bot.guilds:
-            role = discord.utils.get(guild.roles, name=role_name)
+            role = discord.utils.get(guild.roles, name=Config.PENALTY_ROLE_NAME)
             if not role: continue
             
             for member in role.members:
-                # 翌々月の1日に全員解除（シンプルな運用）
                 try:
                     await member.remove_roles(role)
                     if report_channel:
-                        await report_channel.send(f"🕊️ **更生完了**: {member.mention} さんのペナルティ期間が終了しました。今月は真面目に働きましょう。")
+                        await report_channel.send(f"🕊️ **更生完了**: {member.mention} さんのペナルティ期間が終了しました。今月からまた頑張りましょう！")
                 except:
                     pass
 
-    # (statsコマンドなども _calculate_monthly_hours を使うように修正すると統一感が出ます)
+    @app_commands.command(name="stats", description="今月の稼働統計を表示")
+    async def stats(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer()
+        this_month = datetime.datetime.now(Config.JST).strftime('%Y-%m')
+        hours = self._calculate_monthly_hours(member.id, this_month)
+        
+        records = self.sheets.get_user_records(member.id)
+        absent_days = len({str(r['日時'])[:10] for r in records if str(r['日時']).startswith(this_month)})
+
+        embed = discord.Embed(title=f"📊 {member.display_name}の統計 ({this_month})", color=0x00ff00)
+        embed.add_field(name="有効稼働時間", value=f"{hours:.1f} 時間", inline=True)
+        embed.add_field(name="欠勤日数", value=f"{absent_days} 日", inline=True)
+        await interaction.followup.send(embed=embed)
+
+async def setup(bot):
+    await bot.add_cog(AttendanceCog(bot))
