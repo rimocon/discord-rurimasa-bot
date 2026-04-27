@@ -13,13 +13,24 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Cogの読み込み
-        await self.load_extension('cogs.attendance')
+        # cogsフォルダ内のattendance.pyを読み込む
+        try:
+            await self.load_extension('cogs.attendance')
+            print("Successfully loaded cog: cogs.attendance")
+        except Exception as e:
+            print(f"Failed to load cog: {e}")
+
+        # スラッシュコマンドをDiscord側に同期する（これが無いとコマンドが出ません）
         await self.tree.sync()
-        print("Bot is ready and Cogs are loaded.")
+        print("Slash commands synced.")
 
 bot = MyBot()
 
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
+
 if __name__ == "__main__":
-    keep_alive() # Flask起動
+    keep_alive() # Webサーバー起動
     bot.run(Config.DISCORD_TOKEN)

@@ -16,6 +16,27 @@ class AttendanceCog(commands.Cog):
         self.check_attendance.cancel()
         self.monthly_cleanup.cancel()
 
+    # --- ユーティリティ ---
+    @app_commands.command(name="live", description="Botの生存確認")
+    async def live(self, interaction: discord.Interaction):
+        latency = round(self.bot.latency * 1000)
+        await interaction.response.send_message(f"✅ 稼働中 (応答速度: {latency}ms)")
+    
+    @app_commands.command(name="shift", description="シフトを登録")
+    async def shift(self, interaction: discord.Interaction, member: discord.Member, date: str, start: str, end: str):
+        try:
+            datetime.datetime.strptime(date, '%Y-%m-%d')
+            t_start = datetime.datetime.strptime(start, '%H:%M')
+            t_end = datetime.datetime.strptime(end, '%H:%M')
+
+            if start == end or t_end <= t_start:
+                return await interaction.response.send_message("❌ 時刻設定が不正です。", ephemeral=True)
+
+            self.sheets.add_shift([str(member.id), member.display_name, date, start, end])
+            await interaction.response.send_message(f"✅ 登録完了: {member.display_name}")
+        except ValueError:
+            await interaction.response.send_message("❌ 形式エラー (YYYY-MM-DD / HH:MM)", ephemeral=True)
+
     # --- 労働時間の計算ロジック (欠勤日は除外) ---
     def _calculate_monthly_hours(self, user_id, target_month):
         try:
