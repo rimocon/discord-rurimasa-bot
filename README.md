@@ -29,7 +29,7 @@ A robust, modular Discord bot designed to automate work shift management and mon
 ├── web_server.py        # Flask server for 24/7 uptime
 └── cogs/
     └── attendance.py    # Main logic: Commands, Monitoring Task, and Penalties
-
+```
 ## Setup & Installation
 1. Prerequisites
     * A Discord Bot Token (via Discord Developer Portal)
