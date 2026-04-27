@@ -3,6 +3,7 @@ from discord.ext import commands
 import asyncio
 from config import Config
 from web_server import keep_alive
+
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
